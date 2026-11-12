@@ -4,6 +4,8 @@ Manage Agent Skills for Xcode's Coding Assistant integrations.
 
 Xcode reads skills from fixed Codex and Claude locations. Skills installed for other tools, global agent environments, or project-local folders are not automatically available to Xcode. `xcode-skills` installs and manages existing Agent Skills for Xcode only.
 
+<img width="992" height="744" alt="Screenshot 2026-11-11 at 11 56 05 PM" src="https://github.com/user-attachments/assets/66f1000c-dda4-47ff-9ca2-1e0e28875603" />
+
 ## Scope
 
 `xcode-skills` manages:
