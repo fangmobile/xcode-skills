@@ -1,0 +1,5 @@
+# Xcode 26 ships the Metal compiler as a downloadable toolchain that
+# `xcode-select` pointing at CommandLineTools does not expose. Prefer a
+# DEVELOPER_DIR already set in the shell; otherwise use the standard Xcode.
+[env]
+DEVELOPER_DIR = { value = "/Applications/Xcode.app/Contents/Developer", force = false }
