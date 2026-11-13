@@ -13,7 +13,7 @@ Xcode reads skills from fixed Codex and Claude locations. Skills installed for o
 - Codex: `~/Library/Developer/Xcode/CodingAssistant/codex`
 - Claude: `~/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig`
 
-Because Xcode read agent skills exclusively in these 2 folders. [Apple documenentation.](https://developer.apple.com/documentation/Xcode/setting-up-coding-intelligence#Customize-the-Claude-Agent-and-Codex-environments)
+Because Xcode read agent skills exclusively in these 2 folders. [Apple documenentation.](https://developer.apple.com/documentation/xcode/extending-and-customizing-agents#Customize-agent-environments) 
 
 It does not manage global Codex skills, Claude Code skills, project-local skills, or arbitrary skill folders.
 
