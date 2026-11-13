@@ -1,15 +1,21 @@
 use std::path::PathBuf;
 
-use gpui::prelude::*;
-use gpui::{
-    AnyElement, ClickEvent, Context, Div, ElementId, FocusHandle, FontWeight, Render, SharedString,
-    Stateful, Window, actions, div, px, white,
+use gpui_kit::base::Disableable;
+use gpui_kit::component::{
+    ActiveTheme, Sizable,
+    button::{Button, ButtonVariants},
+    status_bar::StatusBar,
+    tab::{Tab, TabBar},
+    tag::{Tag, TagVariant},
+};
+use gpui_kit::prelude::*;
+use gpui_kit::{
+    AnyElement, App, ClickEvent, Context, Div, FontWeight, Render, SharedString, Window, div,
 };
 
 use crate::model::{self, IntegrationRoot, RootOverrides, Skill, SkillState};
-use crate::theme::Palette;
 
-actions!(
+gpui_kit::actions!(
     xcode_skills,
     [
         SwitchTab,
@@ -24,8 +30,8 @@ actions!(
     ]
 );
 
-pub fn key_bindings() -> Vec<gpui::KeyBinding> {
-    use gpui::KeyBinding;
+pub fn key_bindings() -> Vec<gpui_kit::KeyBinding> {
+    use gpui_kit::KeyBinding;
 
     vec![
         KeyBinding::new("tab", SwitchTab, Some("Skills")),
@@ -45,7 +51,7 @@ pub fn key_bindings() -> Vec<gpui::KeyBinding> {
 }
 
 pub struct SkillManager {
-    focus_handle: FocusHandle,
+    focus_handle: gpui_kit::FocusHandle,
     roots: Vec<IntegrationRoot>,
     tabs: Vec<Vec<Skill>>,
     active_tab: usize,
@@ -61,7 +67,7 @@ struct PendingUninstall {
 }
 
 impl SkillManager {
-    pub fn new(overrides: RootOverrides, cx: &mut Context<Self>) -> Self {
+    pub fn new(overrides: RootOverrides, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default();
@@ -70,9 +76,11 @@ impl SkillManager {
             .iter()
             .map(|root| model::scan(root).unwrap_or_default())
             .collect();
+        let focus_handle = cx.focus_handle();
+        focus_handle.focus(window, cx);
 
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             selected: vec![0; roots.len()],
             roots,
             tabs,
@@ -80,10 +88,6 @@ impl SkillManager {
             pending: None,
             status: None,
         }
-    }
-
-    pub fn focus_handle(&self) -> &FocusHandle {
-        &self.focus_handle
     }
 
     fn reload(&mut self) {
@@ -97,18 +101,28 @@ impl SkillManager {
         }
     }
 
-    fn select(&mut self, tab: usize, index: usize) {
+    fn select(&mut self, tab: usize, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.active_tab = tab;
         self.selected[tab] = index;
+        self.focus_handle.focus(window, cx);
     }
 
-    fn switch_tab(&mut self, cx: &mut Context<Self>) {
+    fn select_tab(&mut self, tab: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if tab >= self.roots.len() {
+            return;
+        }
+        self.active_tab = tab;
+        self.pending = None;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn switch_tab(&mut self, _: &SwitchTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.roots.is_empty() {
             return;
         }
-        self.active_tab = (self.active_tab + 1) % self.roots.len();
-        self.pending = None;
-        cx.notify();
+        let tab = (self.active_tab + 1) % self.roots.len();
+        self.select_tab(tab, window, cx);
     }
 
     fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -121,7 +135,15 @@ impl SkillManager {
         cx.notify();
     }
 
-    fn toggle_selected(&mut self, cx: &mut Context<Self>) {
+    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(1, cx);
+    }
+
+    fn select_prev(&mut self, _: &SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(-1, cx);
+    }
+
+    fn toggle_selected(&mut self, _: &ToggleSkill, _: &mut Window, cx: &mut Context<Self>) {
         self.toggle_at(self.active_tab, self.selected[self.active_tab], cx);
     }
 
@@ -135,7 +157,8 @@ impl SkillManager {
         let identity = skill.identity.clone();
         let root = self.roots[tab].clone();
 
-        self.select(tab, index);
+        self.active_tab = tab;
+        self.selected[tab] = index;
         match model::toggle(&root, &identity) {
             Ok(status) => {
                 self.status = Some(format!("{identity} → {status}").into());
@@ -146,7 +169,12 @@ impl SkillManager {
         cx.notify();
     }
 
-    fn request_uninstall_selected(&mut self, cx: &mut Context<Self>) {
+    fn request_uninstall_selected(
+        &mut self,
+        _: &RequestUninstall,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.request_uninstall_at(self.active_tab, self.selected[self.active_tab], cx);
     }
 
@@ -159,7 +187,8 @@ impl SkillManager {
         };
         let identity = skill.identity.clone();
         let paths = model::removal_targets(&self.roots[tab], &identity);
-        self.select(tab, index);
+        self.active_tab = tab;
+        self.selected[tab] = index;
 
         if paths.is_empty() {
             self.status = Some(format!("{identity}: nothing to remove").into());
@@ -173,7 +202,7 @@ impl SkillManager {
         cx.notify();
     }
 
-    fn confirm_uninstall(&mut self, cx: &mut Context<Self>) {
+    fn confirm_uninstall(&mut self, _: &ConfirmUninstall, _: &mut Window, cx: &mut Context<Self>) {
         let Some(pending) = self.pending.take() else {
             return;
         };
@@ -187,19 +216,23 @@ impl SkillManager {
         cx.notify();
     }
 
-    fn cancel_uninstall(&mut self, cx: &mut Context<Self>) {
+    fn cancel_uninstall(&mut self, _: &CancelUninstall, _: &mut Window, cx: &mut Context<Self>) {
         if self.pending.take().is_some() {
             cx.notify();
         }
     }
 
-    fn refresh(&mut self, cx: &mut Context<Self>) {
+    fn refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
         self.reload();
         self.status = Some("refreshed".into());
         cx.notify();
     }
 
-    fn header(&self, palette: Palette, cx: &mut Context<Self>) -> Div {
+    fn quit(&mut self, _: &Quit, _: &mut Window, cx: &mut Context<Self>) {
+        cx.quit();
+    }
+
+    fn header(&self, cx: &mut Context<Self>) -> Div {
         let location = match self.roots.get(self.active_tab) {
             Some(root) => format!("{} — {}", root.id.display(), root.root.to_string_lossy()),
             None => String::new(),
@@ -223,81 +256,60 @@ impl SkillManager {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Xcode Skills"),
                     )
-                    .child(div().text_xs().text_color(palette.muted).child(location)),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(location),
+                    ),
             )
-            .child(
-                chip(SharedString::from("refresh"), "Refresh", palette)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| this.refresh(cx))),
+            .child(Button::new("refresh").small().label("Refresh").on_click(
+                cx.listener(|this, _: &ClickEvent, window, cx| this.refresh(&Refresh, window, cx)),
+            ))
+    }
+
+    fn tab_bar(&self, cx: &mut Context<Self>) -> TabBar {
+        TabBar::new("integration-tabs")
+            .underline()
+            .selected_index(self.active_tab)
+            .children(self.roots.iter().enumerate().map(|(tab, root)| {
+                Tab::new().label(format!("{}  {}", root.id.display(), self.tabs[tab].len()))
+            }))
+            .on_click(
+                cx.listener(|this, tab: &usize, window, cx| this.select_tab(*tab, window, cx)),
             )
     }
 
-    fn tab_bar(&self, palette: Palette, cx: &mut Context<Self>) -> Div {
-        div().flex().items_center().gap_2().px_4().py_3().children(
-            self.roots.iter().enumerate().map(|(tab, root)| {
-                let active = tab == self.active_tab;
-                let count = self.tabs[tab].len();
-                div()
-                    .id(SharedString::from(format!("tab-{tab}")))
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .text_sm()
-                    .cursor_pointer()
-                    .when(active, |element| {
-                        element.bg(palette.panel).text_color(palette.text)
-                    })
-                    .when(!active, |element| {
-                        element
-                            .text_color(palette.muted)
-                            .hover(|style| style.text_color(palette.text))
-                    })
-                    .child(format!("{}  {count}", root.id.display()))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.select(tab, this.selected[tab]);
-                        this.pending = None;
-                        cx.notify();
-                    }))
-            }),
-        )
-    }
-
-    fn body(&self, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+    fn body(&self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(pending) = &self.pending {
-            return self.confirm_card(pending, palette, cx).into_any_element();
+            return self.confirm_card(pending, cx).into_any_element();
         }
 
         let root = &self.roots[self.active_tab];
         if !root.activated {
             return empty_state(
                 format!("{} is not activated in Xcode.", root.id.display()),
-                palette,
+                cx,
             );
         }
 
         let skills = &self.tabs[self.active_tab];
         if skills.is_empty() {
-            return empty_state("No skills installed.".to_string(), palette);
+            return empty_state("No skills installed.".to_string(), cx);
         }
 
         let selected = self.selected[self.active_tab];
         div()
             .id("skill-list")
             .flex_1()
-            .overflow_scroll()
+            .overflow_y_scroll()
             .px_4()
             .py_2()
             .flex()
             .flex_col()
             .gap_1()
             .children(skills.iter().enumerate().map(|(index, skill)| {
-                self.skill_row(
-                    self.active_tab,
-                    index,
-                    skill,
-                    index == selected,
-                    palette,
-                    cx,
-                )
+                self.skill_row(self.active_tab, index, skill, index == selected, cx)
             }))
             .into_any_element()
     }
@@ -308,9 +320,9 @@ impl SkillManager {
         index: usize,
         skill: &Skill,
         selected: bool,
-        palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let (selected_bg, hover_bg) = (cx.theme().list_active, cx.theme().list_hover);
         let mut meta: Vec<String> = Vec::new();
         if let Some(source) = skill.source_label() {
             meta.push(source);
@@ -318,30 +330,7 @@ impl SkillManager {
         if let Some(hash) = skill.short_hash() {
             meta.push(hash.to_string());
         }
-
-        let mut toggle = match skill.state {
-            SkillState::Enabled => chip(
-                SharedString::from(format!("toggle-{tab}-{index}")),
-                "Disable",
-                palette,
-            ),
-            SkillState::Disabled => chip(
-                SharedString::from(format!("toggle-{tab}-{index}")),
-                "Enable",
-                palette,
-            ),
-            SkillState::Conflict | SkillState::Suspicious => chip(
-                SharedString::from(format!("toggle-{tab}-{index}")),
-                "—",
-                palette,
-            ),
-        };
-        if matches!(skill.state, SkillState::Enabled | SkillState::Disabled) {
-            toggle =
-                toggle.on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.toggle_at(tab, index, cx)
-                }));
-        }
+        let toggleable = matches!(skill.state, SkillState::Enabled | SkillState::Disabled);
 
         div()
             .id(SharedString::from(format!("skill-{tab}-{index}")))
@@ -350,14 +339,13 @@ impl SkillManager {
             .gap_3()
             .px_2()
             .py_2()
-            .rounded_md()
-            .cursor_pointer()
-            .when(selected, |element| element.bg(palette.selected))
+            .rounded(cx.theme().radius)
+            .when(selected, |element| element.bg(selected_bg))
             .when(!selected, |element| {
-                element.hover(|style| style.bg(palette.panel_hover))
+                element.hover(|style| style.bg(hover_bg))
             })
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.select(tab, index);
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.select(tab, index, window, cx);
                 cx.notify();
             }))
             .child(
@@ -376,31 +364,37 @@ impl SkillManager {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(palette.muted)
+                            .text_color(cx.theme().muted_foreground)
                             .child(meta.join("  ")),
                     ),
             )
-            .child(state_pill(skill.state, palette))
-            .child(toggle)
+            .child(state_tag(skill.state))
             .child(
-                chip(
-                    SharedString::from(format!("uninstall-{tab}-{index}")),
-                    "Uninstall",
-                    palette,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.request_uninstall_at(tab, index, cx)
-                })),
+                Button::new(SharedString::from(format!("toggle-{tab}-{index}")))
+                    .small()
+                    .label(match skill.state {
+                        SkillState::Enabled => "Disable",
+                        SkillState::Disabled => "Enable",
+                        _ => "—",
+                    })
+                    .disabled(!toggleable)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.toggle_at(tab, index, cx)
+                    })),
+            )
+            .child(
+                Button::new(SharedString::from(format!("uninstall-{tab}-{index}")))
+                    .small()
+                    .danger()
+                    .label("Uninstall")
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.request_uninstall_at(tab, index, cx)
+                    })),
             )
             .into_any_element()
     }
 
-    fn confirm_card(
-        &self,
-        pending: &PendingUninstall,
-        palette: Palette,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn confirm_card(&self, pending: &PendingUninstall, cx: &mut Context<Self>) -> Div {
         let integration = self.roots[pending.tab].id.display();
         div().flex_1().p_4().child(
             div()
@@ -408,10 +402,10 @@ impl SkillManager {
                 .flex_col()
                 .gap_3()
                 .p_4()
-                .rounded_md()
-                .bg(palette.panel)
+                .rounded(cx.theme().radius_lg)
+                .bg(cx.theme().popover)
                 .border_1()
-                .border_color(palette.danger)
+                .border_color(cx.theme().danger)
                 .child(
                     div()
                         .text_lg()
@@ -421,13 +415,13 @@ impl SkillManager {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(palette.muted)
+                        .text_color(cx.theme().muted_foreground)
                         .child(format!("From {integration}. These folders are deleted:")),
                 )
                 .children(pending.paths.iter().map(|path| {
                     div()
                         .text_xs()
-                        .text_color(palette.muted)
+                        .text_color(cx.theme().muted_foreground)
                         .child(path.to_string_lossy().into_owned())
                 }))
                 .child(
@@ -436,138 +430,90 @@ impl SkillManager {
                         .gap_2()
                         .items_center()
                         .child(
-                            chip(SharedString::from("cancel-uninstall"), "Cancel", palette)
-                                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                                    this.cancel_uninstall(cx)
+                            Button::new("cancel-uninstall")
+                                .small()
+                                .label("Cancel")
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.cancel_uninstall(&CancelUninstall, window, cx)
                                 })),
                         )
                         .child(
-                            div()
-                                .id("confirm-uninstall")
-                                .px_2()
-                                .py_1()
-                                .rounded_md()
-                                .bg(palette.danger)
-                                .text_xs()
-                                .text_color(white())
-                                .cursor_pointer()
-                                .child("Uninstall")
-                                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                                    this.confirm_uninstall(cx)
+                            Button::new("confirm-uninstall")
+                                .small()
+                                .danger()
+                                .label("Uninstall")
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.confirm_uninstall(&ConfirmUninstall, window, cx)
                                 })),
                         ),
                 ),
         )
     }
 
-    fn footer(&self, palette: Palette) -> Div {
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .px_4()
-            .py_3()
+    fn footer(&self, cx: &mut Context<Self>) -> StatusBar {
+        StatusBar::new()
             .text_xs()
-            .text_color(palette.muted)
-            .child("Tab switch · ↑↓/j/k move · Space toggle · u uninstall · ⌘R refresh · ⌘Q quit")
-            .child(
+            .text_color(cx.theme().muted_foreground)
+            .left("Tab switch · ↑↓/j/k move · Space toggle · u uninstall · ⌘R refresh · ⌘Q quit")
+            .right(
                 div()
-                    .text_color(palette.accent)
+                    .text_color(cx.theme().primary)
                     .child(self.status.clone().unwrap_or_default()),
             )
     }
 }
 
 impl Render for SkillManager {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = Palette::from_appearance(window.appearance());
-
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("Skills")
             .track_focus(&self.focus_handle)
             .flex()
             .flex_col()
             .size_full()
-            .bg(palette.bg)
-            .text_color(palette.text)
-            .on_action(cx.listener(|this, _: &SwitchTab, _window, cx| this.switch_tab(cx)))
-            .on_action(cx.listener(|this, _: &SelectNext, _window, cx| this.move_selection(1, cx)))
-            .on_action(cx.listener(|this, _: &SelectPrev, _window, cx| this.move_selection(-1, cx)))
-            .on_action(cx.listener(|this, _: &ToggleSkill, _window, cx| this.toggle_selected(cx)))
-            .on_action(cx.listener(|this, _: &RequestUninstall, _window, cx| {
-                this.request_uninstall_selected(cx)
-            }))
-            .on_action(
-                cx.listener(|this, _: &ConfirmUninstall, _window, cx| this.confirm_uninstall(cx)),
-            )
-            .on_action(
-                cx.listener(|this, _: &CancelUninstall, _window, cx| this.cancel_uninstall(cx)),
-            )
-            .on_action(cx.listener(|this, _: &Refresh, _window, cx| this.refresh(cx)))
-            .on_action(cx.listener(|_this, _: &Quit, _window, cx| cx.quit()))
-            .child(self.header(palette, cx))
-            .child(divider(palette))
-            .child(self.tab_bar(palette, cx))
-            .child(self.body(palette, cx))
-            .child(divider(palette))
-            .child(self.footer(palette))
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .on_action(cx.listener(Self::switch_tab))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::toggle_selected))
+            .on_action(cx.listener(Self::request_uninstall_selected))
+            .on_action(cx.listener(Self::confirm_uninstall))
+            .on_action(cx.listener(Self::cancel_uninstall))
+            .on_action(cx.listener(Self::refresh))
+            .on_action(cx.listener(Self::quit))
+            .child(self.header(cx))
+            .child(self.tab_bar(cx))
+            .child(self.body(cx))
+            .child(self.footer(cx))
     }
 }
 
-fn divider(palette: Palette) -> Div {
-    div().h(px(1.0)).w_full().bg(palette.border)
-}
-
-fn empty_state(message: String, palette: Palette) -> AnyElement {
+fn empty_state(message: String, cx: &App) -> AnyElement {
     div()
         .flex_1()
         .flex()
         .items_center()
         .justify_center()
         .text_sm()
-        .text_color(palette.muted)
+        .text_color(cx.theme().muted_foreground)
         .child(message)
         .into_any_element()
 }
 
-fn state_pill(state: SkillState, palette: Palette) -> Div {
-    let color = match state {
-        SkillState::Enabled => palette.success,
-        SkillState::Disabled => palette.muted,
-        SkillState::Conflict => palette.warning,
-        SkillState::Suspicious => palette.danger,
+fn state_tag(state: SkillState) -> Tag {
+    let variant = match state {
+        SkillState::Enabled => TagVariant::Success,
+        SkillState::Disabled => TagVariant::Secondary,
+        SkillState::Conflict => TagVariant::Warning,
+        SkillState::Suspicious => TagVariant::Danger,
     };
 
-    div()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(color)
-        .text_xs()
-        .text_color(color)
+    Tag::new()
+        .with_variant(variant)
+        .outline()
+        .small()
         .child(state.label())
-}
-
-fn chip(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    palette: Palette,
-) -> Stateful<Div> {
-    div()
-        .id(id)
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(palette.border)
-        .bg(palette.panel)
-        .text_xs()
-        .text_color(palette.muted)
-        .cursor_pointer()
-        .hover(|style| style.bg(palette.panel_hover).text_color(palette.text))
-        .child(label.into())
 }
 
 #[cfg(test)]
@@ -576,7 +522,11 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use gpui::{Entity, TestAppContext, VisualTestContext};
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{
+        AppContext, Bounds, Entity, Point, TestAppContext, WindowBounds, WindowHandle,
+        WindowOptions, base::Root, px, size,
+    };
 
     use super::*;
     use crate::model::RootOverrides;
@@ -606,59 +556,67 @@ mod tests {
         (dir, overrides)
     }
 
-    fn states(
-        cx: &mut VisualTestContext,
-        view: &Entity<SkillManager>,
-    ) -> Vec<(String, SkillState)> {
-        cx.update(|_window, cx| {
-            view.read(cx).tabs[0]
-                .iter()
-                .map(|skill| (skill.identity.clone(), skill.state))
-                .collect()
+    fn open_test_window(
+        cx: &mut TestAppContext,
+        overrides: RootOverrides,
+    ) -> (WindowHandle<Root>, Entity<SkillManager>) {
+        cx.update(|cx| {
+            let bounds = Bounds {
+                origin: Point::default(),
+                size: size(px(880.), px(600.)),
+            };
+            let (window, view) = gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| SkillManager::new(overrides, window, cx)),
+            )
+            .expect("open test window");
+            (window.downcast::<Root>().expect("Base Root"), view)
         })
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn keyboard_toggles_and_uninstalls_skills(cx: &mut TestAppContext) {
         let (dir, overrides) = fixture();
         let codex = overrides.codex.clone().unwrap();
+        cx.update(gpui_kit::init);
         cx.update(|cx| cx.bind_keys(key_bindings()));
 
-        let (view, cx) = cx.add_window_view(|window, cx| {
-            let view = SkillManager::new(overrides.clone(), cx);
-            window.focus(view.focus_handle());
-            view
-        });
+        let (window, view) = open_test_window(cx, overrides);
 
-        assert_eq!(
-            states(cx, &view),
-            vec![
-                ("alpha".to_string(), SkillState::Enabled),
-                ("beta".to_string(), SkillState::Disabled),
-            ]
-        );
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
 
-        cx.simulate_keystrokes("space");
-        assert!(
-            codex
-                .join(".xcode-skills/disabled/alpha/SKILL.md")
-                .is_file()
-        );
-        assert!(!codex.join("skills/alpha").exists());
+            window.press("space", cx);
+            assert!(
+                codex
+                    .join(".xcode-skills/disabled/alpha/SKILL.md")
+                    .is_file()
+            );
+            assert!(!codex.join("skills/alpha").exists());
 
-        cx.simulate_keystrokes("down space");
-        assert!(codex.join("skills/beta/SKILL.md").is_file());
-        assert!(!codex.join(".xcode-skills/disabled/beta").exists());
+            window.press("down", cx);
+            window.press("space", cx);
+            assert!(codex.join("skills/beta/SKILL.md").is_file());
+            assert!(!codex.join(".xcode-skills/disabled/beta").exists());
 
-        cx.simulate_keystrokes("u n");
-        assert!(codex.join("skills/beta").exists());
+            window.press("u", cx);
+            window.press("n", cx);
+            assert!(codex.join("skills/beta").exists());
 
-        cx.simulate_keystrokes("u y");
-        assert!(!codex.join("skills/beta").exists());
-        assert!(!codex.join(".xcode-skills/disabled/beta").exists());
+            window.press("u", cx);
+            window.press("y", cx);
+            assert!(!codex.join("skills/beta").exists());
+            assert!(!codex.join(".xcode-skills/disabled/beta").exists());
 
-        cx.simulate_keystrokes("tab");
-        cx.update(|_window, cx| assert_eq!(view.read(cx).active_tab, 1));
+            window.press("tab", cx);
+        })
+        .unwrap();
+
+        cx.update(|cx| assert_eq!(view.read(cx).active_tab, 1));
 
         let _ = fs::remove_dir_all(&dir);
     }
