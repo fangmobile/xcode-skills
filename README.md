@@ -74,13 +74,13 @@ Controls:
 
 The TUI shows inactive integrations, conflicts, and suspicious folders. It can uninstall visible skills after confirmation, but it does not install skills.
 
-## GUI (macOS, Rust + GPUI)
+## GUI (macOS, Rust + GPUI Kit)
 
-`gui/` is a native macOS app with the same management view: Codex/Claude tabs, skill states, enable/disable, and uninstall with confirmation.
+`gui/` is a native macOS app with the same management view: Codex/Claude tabs, skill states, enable/disable, and uninstall with confirmation. It uses [Longbridge GPUI Kit](https://gpui-kit.com) (GPUI 0.9.1 line), not a web runtime.
 
 ```sh
 cd gui
-cargo run
+cargo run --locked
 ```
 
 It reads and writes the same filesystem state as the CLI. See [gui/README.md](gui/README.md) for build details, controls, and architecture.

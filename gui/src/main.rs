@@ -1,12 +1,13 @@
 mod model;
-mod theme;
 mod ui;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gpui::prelude::*;
-use gpui::{App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use gpui_kit::{
+    App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, application, init,
+    open_window, px, size,
+};
 
 use crate::model::RootOverrides;
 use crate::ui::SkillManager;
@@ -20,29 +21,29 @@ fn main() -> ExitCode {
         }
     };
 
-    Application::new().run(move |cx: &mut App| {
-        cx.bind_keys(ui::key_bindings());
+    application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx: &mut App| {
+            init(cx);
+            cx.bind_keys(ui::key_bindings());
 
-        let bounds = Bounds::centered(None, size(px(880.0), px(600.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("xcode-skills".into()),
+            let bounds = Bounds::centered(None, size(px(880.0), px(600.0)), cx);
+            open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("xcode-skills".into()),
+                        ..Default::default()
+                    }),
+                    window_min_size: Some(size(px(640.0), px(420.0))),
                     ..Default::default()
-                }),
-                window_min_size: Some(size(px(640.0), px(420.0))),
-                ..Default::default()
-            },
-            move |window, cx| {
-                let view = cx.new(|cx| SkillManager::new(overrides, cx));
-                window.focus(view.read(cx).focus_handle());
-                view
-            },
-        )
-        .expect("failed to open window");
-        cx.activate(true);
-    });
+                },
+                cx,
+                move |window, cx| cx.new(|cx| SkillManager::new(overrides, window, cx)),
+            )
+            .expect("failed to open window");
+            cx.activate(true);
+        });
 
     ExitCode::SUCCESS
 }
